@@ -21,7 +21,13 @@
     #status p { margin: 0 0 16px; font-size: 16px; }
     .track { width: min(240px, 70vw); height: 3px; background: #222; }
     #bar { height: 100%; width: 0; background: #d6ff00; }
+    #pages { position: relative; }
     canvas { display: block; width: 100%; background: #000; }
+    a.link {
+      position: absolute;
+      z-index: 2;
+      -webkit-tap-highlight-color: transparent;
+    }
   </style>
 </head>
 <body>
@@ -102,6 +108,35 @@
           first = false;
         }
         offset += height;
+      }
+      if (gen !== generation) return;
+      await placeLinks(page, cssWidth, gen);
+    }
+
+    async function placeLinks(page, cssWidth, gen) {
+      const base = page.getViewport({ scale: 1 });
+      const viewport = page.getViewport({ scale: cssWidth / base.width });
+      const annotations = await page.getAnnotations();
+      if (gen !== generation) return;
+      for (const annotation of annotations) {
+        if (annotation.subtype !== "Link" || !annotation.url) continue;
+        const raw = viewport.convertToViewportRectangle(annotation.rect);
+        const left = Math.min(raw[0], raw[2]);
+        const top = Math.min(raw[1], raw[3]);
+        const width = Math.abs(raw[2] - raw[0]);
+        const height = Math.abs(raw[3] - raw[1]);
+        const pad = 12;
+        const link = document.createElement("a");
+        link.className = "link";
+        link.href = annotation.url;
+        link.target = "_blank";
+        link.rel = "noopener noreferrer";
+        link.setAttribute("aria-label", "Телеграм-канал");
+        link.style.left = (left - pad) + "px";
+        link.style.top = (top - pad) + "px";
+        link.style.width = (width + pad * 2) + "px";
+        link.style.height = (height + pad * 2) + "px";
+        pagesEl.appendChild(link);
       }
     }
 
