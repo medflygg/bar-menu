@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#000000">
   <title>Бар</title>
   <style>
-    html, body { margin: 0; background: #000; color: #fff; }
+    html, body { margin: 0; background: #000; color: #fff; overflow-x: hidden; max-width: 100%; }
     body { font-family: system-ui, sans-serif; }
     #status {
       position: fixed;
@@ -21,8 +21,8 @@
     #status p { margin: 0 0 16px; font-size: 16px; }
     .track { width: min(240px, 70vw); height: 3px; background: #222; }
     #bar { height: 100%; width: 0; background: #d6ff00; }
-    #pages { position: relative; }
-    canvas { display: block; width: 100%; background: #000; }
+    #pages { position: relative; width: 100%; max-width: 100%; }
+    canvas { display: block; max-width: 100%; background: #000; }
     a.link {
       position: absolute;
       z-index: 2;
@@ -39,7 +39,7 @@
   </div>
   <main id="pages"></main>
   <script type="module">
-    const SLICE = 2048;
+    const MAX_CANVAS = 4096;
 
     function rootUrl() {
       const url = new URL(import.meta.url);
@@ -70,27 +70,33 @@
       const gen = ++generation;
       try { active?.cancel(); } catch (error) { /* already finished */ }
       const cssWidth = document.documentElement.clientWidth;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = window.devicePixelRatio || 1;
       const page = await pdfDoc.getPage(1);
       if (gen !== generation) return;
 
       const base = page.getViewport({ scale: 1 });
-      const scale = (cssWidth * dpr) / base.width;
-      const full = page.getViewport({ scale });
+      let bitmapWidth = Math.max(1, Math.round(cssWidth * dpr));
+      if (bitmapWidth > MAX_CANVAS) bitmapWidth = MAX_CANVAS;
+      const scale = bitmapWidth / base.width;
+      const fullHeight = base.height * scale;
       pagesEl.replaceChildren();
 
       let offset = 0;
       let first = true;
-      while (offset < full.height - 0.5) {
+      while (offset < fullHeight - 0.5) {
         if (gen !== generation) return;
-        const height = Math.min(SLICE, Math.ceil(full.height - offset));
+        const sliceHeight = Math.min(MAX_CANVAS, Math.ceil(fullHeight - offset));
         const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.floor(full.width));
-        canvas.height = height;
-        canvas.style.height = (height / dpr) + "px";
+        canvas.width = bitmapWidth;
+        canvas.height = sliceHeight;
+        canvas.style.width = cssWidth + "px";
+        canvas.style.height = (sliceHeight * cssWidth / bitmapWidth) + "px";
         const viewport = page.getViewport({ scale, offsetY: -offset });
+        const context = canvas.getContext("2d", { alpha: false });
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
         const task = page.render({
-          canvasContext: canvas.getContext("2d", { alpha: false }),
+          canvasContext: context,
           viewport,
           background: "#000000",
         });
@@ -107,7 +113,7 @@
           statusEl.hidden = true;
           first = false;
         }
-        offset += height;
+        offset += sliceHeight;
       }
       if (gen !== generation) return;
       await placeLinks(page, cssWidth, gen);
