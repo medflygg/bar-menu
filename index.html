@@ -2,12 +2,140 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#000000">
   <title>Бар</title>
-  <script>location.replace("menu.pdf");</script>
-  <meta http-equiv="refresh" content="0; url=menu.pdf">
+  <style>
+    html, body { margin: 0; background: #000; color: #fff; }
+    body { font-family: system-ui, sans-serif; }
+    #status {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      text-align: center;
+      background: #000;
+    }
+    #status[hidden] { display: none; }
+    #status p { margin: 0 0 16px; font-size: 16px; }
+    .track { width: min(240px, 70vw); height: 3px; background: #222; }
+    #bar { height: 100%; width: 0; background: #d6ff00; }
+    canvas { display: block; width: 100%; background: #000; }
+  </style>
 </head>
 <body>
-  <p><a href="menu.pdf">Открыть меню</a></p>
+  <div id="status">
+    <div>
+      <p id="label">Загрузка меню…</p>
+      <div class="track"><div id="bar"></div></div>
+    </div>
+  </div>
+  <main id="pages"></main>
+  <script type="module">
+    const SLICE = 2048;
+
+    function rootUrl() {
+      const url = new URL(import.meta.url);
+      if (!url.pathname.endsWith("/")) {
+        if (/\.[a-z0-9]+$/i.test(url.pathname)) url.pathname = url.pathname.replace(/[^/]*$/, "");
+        else url.pathname += "/";
+      }
+      return url;
+    }
+
+    const root = rootUrl();
+    const statusEl = document.getElementById("status");
+    const labelEl = document.getElementById("label");
+    const barEl = document.getElementById("bar");
+    const pagesEl = document.getElementById("pages");
+
+    function fail(message) {
+      labelEl.textContent = message;
+      barEl.parentElement.hidden = true;
+      statusEl.hidden = false;
+    }
+
+    let generation = 0;
+    let active = null;
+    let pdfDoc = null;
+
+    async function paint() {
+      const gen = ++generation;
+      try { active?.cancel(); } catch (error) { /* already finished */ }
+      const cssWidth = document.documentElement.clientWidth;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const page = await pdfDoc.getPage(1);
+      if (gen !== generation) return;
+
+      const base = page.getViewport({ scale: 1 });
+      const scale = (cssWidth * dpr) / base.width;
+      const full = page.getViewport({ scale });
+      pagesEl.replaceChildren();
+
+      let offset = 0;
+      let first = true;
+      while (offset < full.height - 0.5) {
+        if (gen !== generation) return;
+        const height = Math.min(SLICE, Math.ceil(full.height - offset));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.floor(full.width));
+        canvas.height = height;
+        canvas.style.height = (height / dpr) + "px";
+        const viewport = page.getViewport({ scale, offsetY: -offset });
+        const task = page.render({
+          canvasContext: canvas.getContext("2d", { alpha: false }),
+          viewport,
+          background: "#000000",
+        });
+        active = task;
+        try {
+          await task.promise;
+        } catch (error) {
+          if (gen !== generation || error?.name === "RenderingCancelledException") return;
+          throw error;
+        }
+        if (gen !== generation) return;
+        pagesEl.appendChild(canvas);
+        if (first) {
+          statusEl.hidden = true;
+          first = false;
+        }
+        offset += height;
+      }
+    }
+
+    let resizeTimer = 0;
+    let lastWidth = 0;
+    window.addEventListener("resize", () => {
+      const width = document.documentElement.clientWidth;
+      if (Math.abs(width - lastWidth) < 2) return;
+      window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        lastWidth = document.documentElement.clientWidth;
+        paint().catch(() => fail("Не удалось показать меню. Обновите страницу."));
+      }, 200);
+    });
+
+    try {
+      const pdfjsLib = await import(new URL("vendor/pdf.min.js", root).href);
+      pdfjsLib.GlobalWorkerOptions.workerSrc = new URL("vendor/pdf.worker.min.js", root).href;
+      const loadingTask = pdfjsLib.getDocument(new URL("menu.pdf", root).href);
+      loadingTask.onProgress = ({ loaded, total }) => {
+        if (!total) return;
+        const pct = Math.min(100, Math.round((loaded / total) * 100));
+        barEl.style.width = pct + "%";
+        labelEl.textContent = "Загрузка меню… " + pct + "%";
+      };
+      pdfDoc = await loadingTask.promise;
+      labelEl.textContent = "Открываем меню…";
+      lastWidth = document.documentElement.clientWidth;
+      await paint();
+    } catch (error) {
+      console.error(error);
+      fail("Не удалось открыть меню. Обновите страницу.");
+    }
+  </script>
+  <noscript><p>Для просмотра меню нужен JavaScript.</p></noscript>
 </body>
 </html>
